@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Song {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String   @default("Unknown")
+  album       String   @default("")
+  duration    Float    @default(0)
+  genre       String   @default("")
+  filePath    String
+  coverUrl    String   @default("")
+  lyricsLrc   String   @default("")
+  lyricsJson  String   @default("[]")
+  playCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AdminConfig {
+  id        String @id @default("main")
+  password  String
+  updatedAt DateTime @updatedAt
+}
