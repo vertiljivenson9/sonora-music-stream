@@ -10,7 +10,7 @@ function NavigationBar() {
   const { currentView, setCurrentView, player, isAdmin } = useAppStore();
   const hasSong = !!player.currentSong;
 
-  const navItems: { view: ViewType; label: string; icon: JSX.Element }[] = [
+  const navItems: { view: ViewType; label: string; icon: React.ReactNode }[] = [
     {
       view: 'library',
       label: 'Biblioteca',
