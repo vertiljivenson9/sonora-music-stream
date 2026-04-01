@@ -8,19 +8,22 @@ datasource db {
 }
 
 model Song {
-  id          String   @id @default(cuid())
-  title       String
-  artist      String   @default("Unknown")
-  album       String   @default("")
-  duration    Float    @default(0)
-  genre       String   @default("")
-  filePath    String
-  coverUrl    String   @default("")
-  lyricsLrc   String   @default("")
-  lyricsJson  String   @default("[]")
-  playCount   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  title        String
+  artist       String   @default("Unknown")
+  album        String   @default("")
+  duration     Float    @default(0)
+  genre        String   @default("")
+  filePath     String   @default("")
+  coverUrl     String   @default("")
+  lyricsLrc    String   @default("")
+  lyricsJson   String   @default("[]")
+  playCount    Int      @default(0)
+  audioBase64  String   @default("")
+  coverBase64  String   @default("")
+  mimeType     String   @default("audio/mpeg")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([title])
   @@index([artist])

@@ -79,7 +79,7 @@ export default function SongCard({ song, index }: SongCardProps) {
       <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
         {song.coverUrl ? (
           <img
-            src={`/${song.coverUrl}`}
+            src={`/api/cover/${song.id}`}
             alt={song.title}
             className="w-full h-full object-cover"
           />

@@ -61,7 +61,7 @@ export default function PlayerView() {
           }`} style={{ animationPlayState: isPlaying ? 'running' : 'paused' }}>
             {currentSong.coverUrl ? (
               <img
-                src={`/${currentSong.coverUrl}`}
+                src={`/api/cover/${currentSong.id}`}
                 alt={currentSong.title}
                 className="w-full h-full object-cover"
               />

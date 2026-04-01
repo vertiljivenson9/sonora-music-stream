@@ -20,7 +20,7 @@ export default function AudioPlayer() {
     const audio = audioRef.current;
     if (!audio || !currentSong) return;
 
-    audio.src = `/${currentSong.filePath}`;
+    audio.src = `/api/stream/${currentSong.id}`;
     audio.volume = volume;
 
     if (isPlaying) {
@@ -118,7 +118,7 @@ function AudioControls({ togglePlay, seek }: AudioControlsProps) {
           <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0 overflow-hidden">
             {currentSong.coverUrl ? (
               <img
-                src={`/${currentSong.coverUrl}`}
+                src={`/api/cover/${currentSong.id}`}
                 alt={currentSong.title}
                 className="w-full h-full object-cover"
               />

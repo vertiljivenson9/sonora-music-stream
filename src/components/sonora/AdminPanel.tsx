@@ -140,23 +140,50 @@ export default function AdminPanel() {
       formData.append('genre', uploadForm.genre);
       formData.append('lyricsLrc', uploadForm.lyricsLrc);
 
-      // Simulated progress for better UX
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 10, 90));
-      }, 500);
+      // Use XMLHttpRequest for REAL upload progress
+      const data = await new Promise<{ success?: boolean; title?: string; error?: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const UPLOAD_TIMEOUT = 120000; // 2 minutes
 
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'x-admin-token': adminToken },
-        body: formData,
+        const timer = setTimeout(() => {
+          xhr.abort();
+          reject(new Error('La subida tardó demasiado. Intenta con un archivo más pequeño.'));
+        }, UPLOAD_TIMEOUT);
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setUploadProgress(pct);
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          clearTimeout(timer);
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error('Error del servidor'));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          clearTimeout(timer);
+          reject(new Error('Error de conexión. Verifica tu internet.'));
+        });
+
+        xhr.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('Subida cancelada.'));
+        });
+
+        xhr.open('POST', '/api/upload');
+        xhr.setRequestHeader('x-admin-token', adminToken);
+        xhr.send(formData);
       });
 
-      clearInterval(progressInterval);
       setUploadProgress(100);
 
-      const data = await res.json();
-
-      if (res.ok) {
+      if (data.success) {
         setUploadSuccess(`"${data.title}" se subió correctamente`);
         setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
         setAudioFile(null);
@@ -578,7 +605,7 @@ export default function AdminPanel() {
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
                       {song.coverUrl ? (
-                        <img src={`/${song.coverUrl}`} alt={song.title} className="w-full h-full object-cover" />
+                        <img src={`/api/cover/${song.id}`} alt={song.title} className="w-full h-full object-cover" />
                       ) : (
                         <span className="text-purple-400 font-bold">{song.title.charAt(0)}</span>
                       )}

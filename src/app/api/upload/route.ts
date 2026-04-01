@@ -1,32 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
 import { db } from '@/lib/db';
 
 const MAX_AUDIO_SIZE = 100 * 1024 * 1024; // 100MB
 const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10MB
 
-// Extended list — many OS report MP3 as different MIME types
 const ALLOWED_AUDIO_TYPES = [
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/x-mpeg',
-  'audio/mp4',
-  'audio/x-m4a',
-  'audio/m4a',
-  'audio/aac',
-  'audio/x-aac',
-  'audio/wav',
-  'audio/x-wav',
-  'audio/ogg',
-  'audio/flac',
-  'audio/x-flac',
-  'audio/webm',
-  'audio/x-ms-wma',
+  'audio/mpeg', 'audio/mp3', 'audio/x-mpeg',
+  'audio/mp4', 'audio/x-m4a', 'audio/m4a', 'audio/aac',
+  'audio/wav', 'audio/x-wav',
+  'audio/ogg', 'audio/flac', 'audio/x-flac',
+  'audio/webm', 'audio/x-ms-wma',
 ];
 
-const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma', '.webm', '.opus', '.mp4', '.oga'];
+const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma', '.webm', '.opus'];
 
 const ALLOWED_COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/jpg'];
 
@@ -52,6 +38,16 @@ function getFileExtension(filename: string): string {
   return parts.length > 1 ? `.${parts.pop()}` : '';
 }
 
+// Convert ArrayBuffer to base64
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -75,15 +71,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `El archivo es muy grande. Máximo ${MAX_AUDIO_SIZE / 1024 / 1024}MB` }, { status: 400 });
     }
 
-    // Validate audio type — check MIME type OR file extension (some OS report wrong MIME)
+    // Validate audio type
     const ext = getFileExtension(audioFile.name);
     const hasValidMime = audioFile.type && ALLOWED_AUDIO_TYPES.includes(audioFile.type.toLowerCase());
     const hasValidExt = ALLOWED_EXTENSIONS.includes(ext);
 
     if (!hasValidMime && !hasValidExt) {
       return NextResponse.json({
-        error: `Formato no soportado: ${audioFile.type || 'desconocido'}. Usa MP3, WAV, OGG, M4A, FLAC`
+        error: `Formato no soportado. Usa MP3, WAV, OGG, M4A, FLAC`
       }, { status: 400 });
+    }
+
+    // Determine MIME type
+    let mimeType = audioFile.type || 'audio/mpeg';
+    if (!mimeType || mimeType === '') {
+      const mimeMap: Record<string, string> = {
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.flac': 'audio/flac',
+        '.webm': 'audio/webm',
+        '.wma': 'audio/x-ms-wma',
+      };
+      mimeType = mimeMap[ext] || 'audio/mpeg';
     }
 
     // Validate cover file
@@ -91,42 +103,35 @@ export async function POST(request: NextRequest) {
       if (coverFile.size > MAX_COVER_SIZE) {
         return NextResponse.json({ error: `La portada es muy grande. Máximo ${MAX_COVER_SIZE / 1024 / 1024}MB` }, { status: 400 });
       }
-      if (coverFile.type && !ALLOWED_COVER_TYPES.includes(coverFile.type.toLowerCase())) {
-        return NextResponse.json({ error: `Formato de portada no soportado. Usa JPEG, PNG, WebP o GIF` }, { status: 400 });
-      }
     }
 
-    const songsDir = path.join(process.cwd(), 'public', 'songs');
-    if (!existsSync(songsDir)) {
-      await mkdir(songsDir, { recursive: true });
-    }
+    // Convert files to base64 and store in database
+    const audioArrayBuffer = await audioFile.arrayBuffer();
+    const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
 
-    // Save audio file
-    const audioBuffer = Buffer.from(await audioFile.arrayBuffer());
-    const audioFileName = `${Date.now()}-${audioFile.name.replace(/[^a-zA-Z0-9.\-]/g, '_')}`;
-    const audioPath = `songs/${audioFileName}`;
-    const fullAudioPath = path.join(process.cwd(), 'public', audioPath);
-    await writeFile(fullAudioPath, audioBuffer);
-
-    // Save cover file if provided
-    let coverUrl = '';
+    let coverBase64 = '';
     if (coverFile) {
-      const coversDir = path.join(process.cwd(), 'public', 'covers');
-      if (!existsSync(coversDir)) {
-        await mkdir(coversDir, { recursive: true });
-      }
-      const coverBuffer = Buffer.from(await coverFile.arrayBuffer());
-      const coverExt = getFileExtension(coverFile.name) || '.jpg';
-      const coverFileName = `${Date.now()}-cover${coverExt}`;
-      coverUrl = `covers/${coverFileName}`;
-      const fullCoverPath = path.join(process.cwd(), 'public', coverUrl);
-      await writeFile(fullCoverPath, coverBuffer);
+      const coverArrayBuffer = await coverFile.arrayBuffer();
+      coverBase64 = arrayBufferToBase64(coverArrayBuffer);
     }
 
     const lyricsJson = lyricsLrc ? JSON.stringify(parseLrc(lyricsLrc)) : '[]';
 
     const song = await db.song.create({
-      data: { title, artist, album, duration: 0, genre, filePath: audioPath, coverUrl, lyricsLrc, lyricsJson },
+      data: {
+        title,
+        artist,
+        album,
+        duration: 0,
+        genre,
+        filePath: audioFile.name,
+        coverUrl: coverFile ? coverFile.name : '',
+        lyricsLrc,
+        lyricsJson,
+        audioBase64,
+        coverBase64,
+        mimeType,
+      },
     });
 
     return NextResponse.json(song, { status: 201 });
