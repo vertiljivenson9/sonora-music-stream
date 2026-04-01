@@ -8,8 +8,8 @@ import LiveTranscriber from './LiveTranscriber';
 import { formatTime, safeJsonParse } from '@/lib/utils';
 
 export default function PlayerView() {
-  const { player, setCurrentView } = useAppStore();
-  const { currentSong, isPlaying, currentTime, duration, volume, setVolume } = player;
+  const { player, setCurrentView, setVolume } = useAppStore();
+  const { currentSong, isPlaying, currentTime, duration, volume } = player;
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 

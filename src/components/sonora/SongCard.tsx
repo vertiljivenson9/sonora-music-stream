@@ -1,23 +1,10 @@
 'use client';
 
-import { useAppStore } from '@/store/useAppStore';
+import { useAppStore, type Song } from '@/store/useAppStore';
 import { formatTime } from '@/lib/utils';
 
 interface SongCardProps {
-  song: {
-    id: string;
-    title: string;
-    artist: string;
-    album: string;
-    duration: number;
-    genre: string;
-    filePath: string;
-    coverUrl: string;
-    lyricsLrc: string;
-    lyricsJson: string;
-    playCount: number;
-    createdAt: string;
-  };
+  song: Song;
   index: number;
 }
 

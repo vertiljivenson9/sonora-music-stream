@@ -9,8 +9,9 @@ export default function LiveTranscriber() {
   const isActiveRef = useRef(false);
 
   const startTranscription = () => {
-    const SpeechRecognition = (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition 
-      || (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any;
+    const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setIsSupported(false);
@@ -24,7 +25,8 @@ export default function LiveTranscriber() {
 
     let fullTranscript = '';
 
-    recognition.onresult = (event: { results: { isFinal: boolean; transcript: string }[][] }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
