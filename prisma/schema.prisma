@@ -21,6 +21,11 @@ model Song {
   playCount   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([title])
+  @@index([artist])
+  @@index([genre])
+  @@index([createdAt])
 }
 
 model AdminConfig {

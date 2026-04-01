@@ -4,10 +4,14 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { db } from '@/lib/db';
 
+const MAX_AUDIO_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_COVER_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_AUDIO_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/flac', 'audio/webm', 'audio/x-m4a'];
+const ALLOWED_COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
 function parseLrc(lrcText: string): Array<{ time: number; text: string }> {
   const lines = lrcText.split('\n');
   const lyrics: Array<{ time: number; text: string }> = [];
-
   for (const line of lines) {
     const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
     if (match) {
@@ -16,12 +20,9 @@ function parseLrc(lrcText: string): Array<{ time: number; text: string }> {
       const ms = parseInt(match[3].padEnd(3, '0'));
       const time = minutes * 60 + seconds + ms / 1000;
       const text = match[4].trim();
-      if (text) {
-        lyrics.push({ time, text });
-      }
+      if (text) lyrics.push({ time, text });
     }
   }
-
   return lyrics.sort((a, b) => a.time - b.time);
 }
 
@@ -39,12 +40,28 @@ export async function POST(request: NextRequest) {
     if (!audioFile) {
       return NextResponse.json({ error: 'Audio file is required' }, { status: 400 });
     }
-
     if (!title) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
     }
 
-    // Ensure songs directory exists
+    // Validate audio file
+    if (audioFile.size > MAX_AUDIO_SIZE) {
+      return NextResponse.json({ error: `Audio file too large. Max ${MAX_AUDIO_SIZE / 1024 / 1024}MB` }, { status: 400 });
+    }
+    if (audioFile.type && !ALLOWED_AUDIO_TYPES.includes(audioFile.type)) {
+      return NextResponse.json({ error: `Invalid audio type: ${audioFile.type}. Allowed: MP3, WAV, OGG, M4A, FLAC, WebM` }, { status: 400 });
+    }
+
+    // Validate cover file
+    if (coverFile) {
+      if (coverFile.size > MAX_COVER_SIZE) {
+        return NextResponse.json({ error: `Cover image too large. Max ${MAX_COVER_SIZE / 1024 / 1024}MB` }, { status: 400 });
+      }
+      if (coverFile.type && !ALLOWED_COVER_TYPES.includes(coverFile.type)) {
+        return NextResponse.json({ error: `Invalid cover type: ${coverFile.type}. Allowed: JPEG, PNG, WebP, GIF` }, { status: 400 });
+      }
+    }
+
     const songsDir = path.join(process.cwd(), 'public', 'songs');
     if (!existsSync(songsDir)) {
       await mkdir(songsDir, { recursive: true });
@@ -73,25 +90,10 @@ export async function POST(request: NextRequest) {
       await writeFile(fullCoverPath, coverBuffer);
     }
 
-    // Parse lyrics
     const lyricsJson = lyricsLrc ? JSON.stringify(parseLrc(lyricsLrc)) : '[]';
 
-    // Get audio duration (rough estimate from file size, will be updated client-side)
-    const duration = 0;
-
-    // Create song in database
     const song = await db.song.create({
-      data: {
-        title,
-        artist,
-        album,
-        duration,
-        genre,
-        filePath: audioPath,
-        coverUrl,
-        lyricsLrc,
-        lyricsJson,
-      },
+      data: { title, artist, album, duration: 0, genre, filePath: audioPath, coverUrl, lyricsLrc, lyricsJson },
     });
 
     return NextResponse.json(song, { status: 201 });

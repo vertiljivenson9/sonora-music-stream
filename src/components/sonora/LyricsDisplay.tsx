@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useAppStore, LyricLine } from '@/store/useAppStore';
+import { safeJsonParse } from '@/lib/utils';
 
 export default function LyricsDisplay() {
   const { player, liveTranscript, isLiveTranscribing } = useAppStore();
@@ -9,9 +10,7 @@ export default function LyricsDisplay() {
   const activeLineRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const lyrics: LyricLine[] = currentSong?.lyricsJson
-    ? JSON.parse(currentSong.lyricsJson)
-    : [];
+  const lyrics: LyricLine[] = safeJsonParse<LyricLine[]>(currentSong?.lyricsJson || '[]', []);
 
   // Find active line
   const activeIndex = lyrics.findIndex((line, index) => {

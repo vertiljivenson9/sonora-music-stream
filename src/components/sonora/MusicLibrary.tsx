@@ -1,21 +1,29 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import SongCard from './SongCard';
+import { useDebounce } from '@/hooks/useDebounce';
 
 export default function MusicLibrary() {
   const { songs, setSongs, searchQuery, setSearchQuery } = useAppStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const debouncedQuery = useDebounce(searchQuery, 300);
 
   const fetchSongs = async () => {
+    setIsLoading(true);
     try {
       const res = await fetch('/api/songs');
       const data = await res.json();
-      if (Array.isArray(data)) {
+      if (data.songs) {
+        setSongs(data.songs);
+      } else if (Array.isArray(data)) {
         setSongs(data);
       }
     } catch (error) {
       console.error('Error fetching songs:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -25,7 +33,7 @@ export default function MusicLibrary() {
 
   const filteredSongs = useMemo(() => {
     if (!searchQuery.trim()) return songs;
-    const q = searchQuery.toLowerCase();
+    const q = debouncedQuery.toLowerCase();
     return songs.filter(
       (s) =>
         s.title.toLowerCase().includes(q) ||
@@ -33,7 +41,7 @@ export default function MusicLibrary() {
         s.album.toLowerCase().includes(q) ||
         s.genre.toLowerCase().includes(q)
     );
-  }, [songs, searchQuery]);
+  }, [songs, debouncedQuery]);
 
   const totalDuration = useMemo(() => {
     return songs.reduce((acc, s) => acc + (s.duration || 0), 0);
@@ -92,7 +100,20 @@ export default function MusicLibrary() {
       </div>
 
       {/* Song list */}
-      {filteredSongs.length === 0 ? (
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-4 p-3 rounded-xl">
+              <div className="w-8 h-4 bg-muted animate-pulse rounded" />
+              <div className="w-12 h-12 bg-muted animate-pulse rounded-lg" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-muted animate-pulse rounded w-1/3" />
+                <div className="h-3 bg-muted animate-pulse rounded w-1/4" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filteredSongs.length === 0 ? (
         <div className="text-center py-16">
           {songs.length === 0 ? (
             <>

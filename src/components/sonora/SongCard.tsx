@@ -1,6 +1,7 @@
 'use client';
 
 import { useAppStore } from '@/store/useAppStore';
+import { formatTime } from '@/lib/utils';
 
 interface SongCardProps {
   song: {
@@ -31,13 +32,6 @@ export default function SongCard({ song, index }: SongCardProps) {
     songs,
     player,
   } = useAppStore();
-
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '--:--';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
 
   const isCurrentSong = player.currentSong?.id === song.id;
 

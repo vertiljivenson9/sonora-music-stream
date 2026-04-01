@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store/useAppStore';
+import { formatTime } from '@/lib/utils';
 
 export default function AudioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -62,7 +63,7 @@ export default function AudioPlayer() {
 
   return (
     <>
-      <audio ref={audioRef} preload="metadata" crossOrigin="anonymous" />
+      <audio ref={audioRef} preload="metadata" />
       <AudioControls togglePlay={togglePlay} seek={seek} />
     </>
   );
@@ -85,12 +86,7 @@ function AudioControls({ togglePlay, seek }: AudioControlsProps) {
 
   const { currentSong, isPlaying, currentTime, duration, volume } = player;
 
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -107,11 +103,11 @@ function AudioControls({ togglePlay, seek }: AudioControlsProps) {
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-xl border-t border-border">
       {/* Progress bar */}
       <div
-        className="h-1 w-full bg-muted cursor-pointer group"
+        className="h-2 w-full bg-muted cursor-pointer group"
         onClick={handleProgressClick}
       >
         <div
-          className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-100 group-hover:h-1.5"
+          className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-100 group-hover:h-3"
           style={{ width: `${progress}%` }}
         />
       </div>

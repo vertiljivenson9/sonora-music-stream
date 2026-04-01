@@ -5,7 +5,7 @@ import { useAppStore } from '@/store/useAppStore';
 import LiveTranscriber from './LiveTranscriber';
 
 export default function AdminPanel() {
-  const { songs, setSongs, isAdmin, setIsAdmin } = useAppStore();
+  const { songs, setSongs, isAdmin, setIsAdmin, adminToken, setAdminToken } = useAppStore();
 
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -36,6 +36,7 @@ export default function AdminPanel() {
       const data = await res.json();
       if (res.ok) {
         setIsAdmin(true);
+        setAdminToken(data.token);
         setLoginError('');
       } else {
         setLoginError('Contraseña incorrecta');
@@ -68,6 +69,7 @@ export default function AdminPanel() {
 
       const res = await fetch('/api/upload', {
         method: 'POST',
+        headers: { 'x-admin-token': adminToken },
         body: formData,
       });
 
@@ -81,7 +83,7 @@ export default function AdminPanel() {
         // Refresh songs
         const songsRes = await fetch('/api/songs');
         const songsData = await songsRes.json();
-        setSongs(songsData);
+        setSongs(songsData.songs || songsData);
       } else {
         setUploadError(data.error || 'Error al subir');
       }
@@ -95,11 +97,11 @@ export default function AdminPanel() {
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar esta canción?')) return;
     try {
-      const res = await fetch(`/api/songs/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/songs/${id}`, { method: 'DELETE', headers: { 'x-admin-token': adminToken } });
       if (res.ok) {
         const songsRes = await fetch('/api/songs');
         const songsData = await songsRes.json();
-        setSongs(songsData);
+        setSongs(songsData.songs || songsData);
       }
     } catch (error) {
       console.error('Delete error:', error);
@@ -110,13 +112,13 @@ export default function AdminPanel() {
     try {
       const res = await fetch(`/api/songs/${songId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ lyricsLrc: editLyrics }),
       });
       if (res.ok) {
         const songsRes = await fetch('/api/songs');
         const songsData = await songsRes.json();
-        setSongs(songsData);
+        setSongs(songsData.songs || songsData);
         setEditingSong(null);
       }
     } catch (error) {
@@ -165,9 +167,7 @@ export default function AdminPanel() {
             </button>
           </form>
 
-          <p className="text-xs text-muted-foreground text-center mt-4">
-            Contraseña por defecto: admin123
-          </p>
+
         </div>
       </div>
     );
@@ -184,7 +184,7 @@ export default function AdminPanel() {
         <div className="flex items-center gap-3">
           <LiveTranscriber />
           <button
-            onClick={() => setIsAdmin(false)}
+            onClick={() => { setIsAdmin(false); setAdminToken(''); }}
             className="px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:bg-accent transition-colors"
           >
             Cerrar sesión

@@ -1,5 +1,14 @@
 import { db } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
+import path from 'path';
+
+function isPathSafe(filePath: string): boolean {
+  // Resolve the full path
+  const publicDir = path.resolve(process.cwd(), 'public');
+  const fullPath = path.resolve(publicDir, filePath);
+  // Ensure the resolved path is within the public directory
+  return fullPath.startsWith(publicDir) && !filePath.includes('..');
+}
 
 export async function GET(
   request: NextRequest,
@@ -11,11 +20,6 @@ export async function GET(
     if (!song) {
       return NextResponse.json({ error: 'Song not found' }, { status: 404 });
     }
-    // Increment play count
-    await db.song.update({
-      where: { id },
-      data: { playCount: { increment: 1 } },
-    });
     return NextResponse.json(song);
   } catch (error) {
     console.error('Error fetching song:', error);
@@ -62,16 +66,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Song not found' }, { status: 404 });
     }
 
-    // Delete file from filesystem
     const fs = await import('fs');
-    const path = await import('path');
-    const fullPath = path.join(process.cwd(), 'public', song.filePath);
-    if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
+    const pathModule = await import('path');
+
+    // Delete audio file with path traversal protection
+    if (song.filePath && isPathSafe(song.filePath)) {
+      const fullPath = pathModule.join(process.cwd(), 'public', song.filePath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
     }
-    // Delete cover if exists
-    if (song.coverUrl) {
-      const coverPath = path.join(process.cwd(), 'public', song.coverUrl);
+
+    // Delete cover if exists with path traversal protection
+    if (song.coverUrl && isPathSafe(song.coverUrl)) {
+      const coverPath = pathModule.join(process.cwd(), 'public', song.coverUrl);
       if (fs.existsSync(coverPath)) {
         fs.unlinkSync(coverPath);
       }

@@ -31,6 +31,8 @@ interface PlayerState {
   volume: number;
   queue: Song[];
   queueIndex: number;
+  shuffle: boolean;
+  repeat: 'off' | 'all' | 'one';
 }
 
 interface AppState {
@@ -51,6 +53,8 @@ interface AppState {
   setQueueIndex: (index: number) => void;
   playNext: () => void;
   playPrevious: () => void;
+  toggleShuffle: () => void;
+  toggleRepeat: () => void;
 
   // Library
   songs: Song[];
@@ -87,6 +91,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     volume: 0.8,
     queue: [],
     queueIndex: 0,
+    shuffle: false,
+    repeat: 'off',
   },
   setCurrentSong: (song) => set((state) => ({
     player: { ...state.player, currentSong: song }
@@ -110,7 +116,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     player: { ...state.player, queueIndex: index }
   })),
   playNext: () => set((state) => {
-    const { queue, queueIndex } = state.player;
+    const { queue, queueIndex, shuffle, repeat } = state.player;
+    if (repeat === 'one') {
+      return {
+        player: {
+          ...state.player,
+          currentTime: 0,
+          isPlaying: true,
+        }
+      };
+    }
+    if (shuffle) {
+      if (queue.length <= 1) {
+        return { player: { ...state.player, isPlaying: false } };
+      }
+      let nextIndex: number;
+      do {
+        nextIndex = Math.floor(Math.random() * queue.length);
+      } while (nextIndex === queueIndex);
+      return {
+        player: {
+          ...state.player,
+          queueIndex: nextIndex,
+          currentSong: queue[nextIndex],
+          currentTime: 0,
+          isPlaying: true,
+        }
+      };
+    }
     const nextIndex = queueIndex + 1;
     if (nextIndex < queue.length) {
       return {
@@ -123,12 +156,38 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       };
     }
+    if (repeat === 'all' && queue.length > 0) {
+      return {
+        player: {
+          ...state.player,
+          queueIndex: 0,
+          currentSong: queue[0],
+          currentTime: 0,
+          isPlaying: true,
+        }
+      };
+    }
     return {
       player: { ...state.player, isPlaying: false }
     };
   }),
   playPrevious: () => set((state) => {
-    const { queue, queueIndex } = state.player;
+    const { queue, queueIndex, shuffle } = state.player;
+    if (shuffle && queue.length > 1) {
+      let prevIndex: number;
+      do {
+        prevIndex = Math.floor(Math.random() * queue.length);
+      } while (prevIndex === queueIndex);
+      return {
+        player: {
+          ...state.player,
+          queueIndex: prevIndex,
+          currentSong: queue[prevIndex],
+          currentTime: 0,
+          isPlaying: true,
+        }
+      };
+    }
     const prevIndex = queueIndex - 1;
     if (prevIndex >= 0) {
       return {
@@ -142,6 +201,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     }
     return state;
+  }),
+  toggleShuffle: () => set((state) => ({
+    player: { ...state.player, shuffle: !state.player.shuffle }
+  })),
+  toggleRepeat: () => set((state) => {
+    const modes: ('off' | 'all' | 'one')[] = ['off', 'all', 'one'];
+    const current = state.player.repeat;
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+    return {
+      player: { ...state.player, repeat: next }
+    };
   }),
 
   // Library

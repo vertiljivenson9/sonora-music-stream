@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function LiveTranscriber() {
   const { player, liveTranscript, setLiveTranscript, isLiveTranscribing, setIsLiveTranscribing } = useAppStore();
   const [isSupported, setIsSupported] = useState(true);
+  const isActiveRef = useRef(false);
 
   const startTranscription = () => {
     const SpeechRecognition = (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition 
@@ -40,8 +41,10 @@ export default function LiveTranscriber() {
       setIsLiveTranscribing(false);
     };
 
+    isActiveRef.current = true;
+
     recognition.onend = () => {
-      if (isLiveTranscribing) {
+      if (isActiveRef.current) {
         recognition.start();
       }
     };
@@ -51,6 +54,7 @@ export default function LiveTranscriber() {
   };
 
   const stopTranscription = () => {
+    isActiveRef.current = false;
     setIsLiveTranscribing(false);
   };
 

@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useAppStore, ViewType } from '@/store/useAppStore';
 import AudioPlayer from '@/components/sonora/AudioPlayer';
 import MusicLibrary from '@/components/sonora/MusicLibrary';
@@ -67,6 +66,7 @@ function NavigationBar() {
             } ${item.view === 'player' && !hasSong ? 'opacity-40 cursor-not-allowed' : ''}`}
             disabled={item.view === 'player' && !hasSong}
             title={item.label}
+            aria-label={item.label}
           >
             {item.icon}
           </button>
@@ -92,6 +92,7 @@ function NavigationBar() {
                   : 'text-muted-foreground'
               } ${item.view === 'player' && !hasSong ? 'opacity-40' : ''}`}
               disabled={item.view === 'player' && !hasSong}
+              aria-label={item.label}
             >
               {item.icon}
               <span className="text-[10px] font-medium">{item.label}</span>
