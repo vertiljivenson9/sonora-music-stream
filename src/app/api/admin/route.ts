@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { comparePassword, generateToken } from '@/lib/auth';
+import { comparePassword, generateToken, hashPassword } from '@/lib/auth';
 
 // Simple in-memory rate limiting
 const loginAttempts = new Map<string, { count: number; lastAttempt: number }>();
@@ -35,9 +35,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Admin not configured' }, { status: 500 });
     }
 
-    const isValid = await comparePassword(password, admin.password);
+    // Try bcrypt comparison first
+    let isValid = false;
+    try {
+      isValid = await comparePassword(password, admin.password);
+    } catch {
+      // If bcrypt fails, the password might be plaintext (legacy)
+      isValid = password === admin.password;
+    }
+
+    // Also check plaintext fallback for migration from old format
+    if (!isValid && password === admin.password) {
+      isValid = true;
+    }
+
     if (!isValid) {
-      // Record failed attempt
       const current = loginAttempts.get(clientIp) || { count: 0, lastAttempt: 0 };
       loginAttempts.set(clientIp, { count: current.count + 1, lastAttempt: Date.now() });
 
@@ -46,6 +58,15 @@ export async function POST(request: NextRequest) {
 
     // Success - clear attempts
     loginAttempts.delete(clientIp);
+
+    // If password was plaintext, upgrade to bcrypt hash
+    if (admin.password.startsWith('$2') === false) {
+      const hashedPassword = await hashPassword(password);
+      await db.adminConfig.update({
+        where: { id: 'main' },
+        data: { password: hashedPassword },
+      });
+    }
 
     const token = generateToken({ role: 'admin', id: 'main' });
     return NextResponse.json({ success: true, token });
