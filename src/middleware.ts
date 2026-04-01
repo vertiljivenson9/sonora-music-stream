@@ -10,6 +10,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow login endpoint without token
+  if (method === 'POST' && pathname === '/api/admin') {
+    return NextResponse.next();
+  }
+
   // Protect all other API routes (write operations)
   if (pathname.startsWith('/api/songs') || pathname.startsWith('/api/upload') || pathname.startsWith('/api/admin')) {
     const token = request.headers.get('x-admin-token');

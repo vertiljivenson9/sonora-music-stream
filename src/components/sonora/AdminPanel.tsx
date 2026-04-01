@@ -1,14 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import LiveTranscriber from './LiveTranscriber';
 
 export default function AdminPanel() {
-  const { songs, setSongs, isAdmin, setIsAdmin, adminToken, setAdminToken } = useAppStore();
+  const { songs, setSongs, setIsAdmin, adminToken, setAdminToken } = useAppStore();
 
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     title: '',
@@ -25,26 +23,22 @@ export default function AdminPanel() {
   const [editLyrics, setEditLyrics] = useState('');
   const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await fetch('/api/admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: loginPassword }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setIsAdmin(true);
-        setAdminToken(data.token);
-        setLoginError('');
-      } else {
-        setLoginError('Contraseña incorrecta');
-      }
-    } catch {
-      setLoginError('Error de conexión');
+  // Auto-authenticate on mount (no password needed)
+  useEffect(() => {
+    if (!adminToken) {
+      fetch('/api/admin', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setIsAdmin(true);
+            setAdminToken(data.token);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setIsAdmin(true);
     }
-  };
+  }, []);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,46 +127,6 @@ export default function AdminPanel() {
 
   const inputClass = "w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500";
 
-  if (!isAdmin) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center px-4">
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center mx-auto mb-4">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-foreground">Panel de Administración</h2>
-            <p className="text-sm text-muted-foreground mt-1">Ingresa la contraseña para continuar</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <input
-              type="password"
-              placeholder="Contraseña"
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              className={inputClass}
-            />
-            {loginError && (
-              <p className="text-sm text-red-400">{loginError}</p>
-            )}
-            <button
-              type="submit"
-              className="w-full py-2.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium hover:opacity-90 transition-opacity"
-            >
-              Ingresar
-            </button>
-          </form>
-
-
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
       {/* Header */}
@@ -183,12 +137,6 @@ export default function AdminPanel() {
         </div>
         <div className="flex items-center gap-3">
           <LiveTranscriber />
-          <button
-            onClick={() => { setIsAdmin(false); setAdminToken(''); }}
-            className="px-3 py-1.5 rounded-lg text-sm text-muted-foreground hover:bg-accent transition-colors"
-          >
-            Cerrar sesión
-          </button>
         </div>
       </div>
 
