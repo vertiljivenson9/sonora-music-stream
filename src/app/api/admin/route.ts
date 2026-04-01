@@ -1,11 +1,12 @@
-import { db } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { comparePassword, generateToken, hashPassword } from '@/lib/auth';
+import { generateToken } from '@/lib/auth';
 
 // Simple in-memory rate limiting
 const loginAttempts = new Map<string, { count: number; lastAttempt: number }>();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+const ADMIN_PASSWORD = 'alicia123';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
       if (elapsed < LOCKOUT_MS) {
         const remaining = Math.ceil((LOCKOUT_MS - elapsed) / 60000);
         return NextResponse.json(
-          { error: `Too many attempts. Try again in ${remaining} minutes.` },
+          { error: `Demasiados intentos. Intenta de nuevo en ${remaining} minutos.` },
           { status: 429 }
         );
       }
@@ -27,51 +28,24 @@ export async function POST(request: NextRequest) {
 
     const { password } = await request.json();
     if (!password) {
-      return NextResponse.json({ error: 'Password is required' }, { status: 400 });
+      return NextResponse.json({ error: 'La contraseña es requerida' }, { status: 400 });
     }
 
-    const admin = await db.adminConfig.findUnique({ where: { id: 'main' } });
-    if (!admin) {
-      return NextResponse.json({ error: 'Admin not configured' }, { status: 500 });
-    }
-
-    // Try bcrypt comparison first
-    let isValid = false;
-    try {
-      isValid = await comparePassword(password, admin.password);
-    } catch {
-      // If bcrypt fails, the password might be plaintext (legacy)
-      isValid = password === admin.password;
-    }
-
-    // Also check plaintext fallback for migration from old format
-    if (!isValid && password === admin.password) {
-      isValid = true;
-    }
-
-    if (!isValid) {
+    // Direct comparison
+    if (password !== ADMIN_PASSWORD) {
       const current = loginAttempts.get(clientIp) || { count: 0, lastAttempt: 0 };
       loginAttempts.set(clientIp, { count: current.count + 1, lastAttempt: Date.now() });
 
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+      return NextResponse.json({ error: 'Contraseña incorrecta' }, { status: 401 });
     }
 
     // Success - clear attempts
     loginAttempts.delete(clientIp);
 
-    // If password was plaintext, upgrade to bcrypt hash
-    if (admin.password.startsWith('$2') === false) {
-      const hashedPassword = await hashPassword(password);
-      await db.adminConfig.update({
-        where: { id: 'main' },
-        data: { password: hashedPassword },
-      });
-    }
-
     const token = generateToken({ role: 'admin', id: 'main' });
     return NextResponse.json({ success: true, token });
   } catch (error) {
-    console.error('Error authenticating:', error);
-    return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
+    console.error('Error autenticando:', error);
+    return NextResponse.json({ error: 'Autenticación fallida' }, { status: 500 });
   }
 }
