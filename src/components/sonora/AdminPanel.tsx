@@ -1,8 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import LiveTranscriber from './LiveTranscriber';
+
+// MIME types explícitos para máxima compatibilidad móvil
+const AUDIO_ACCEPT = 'audio/mpeg,.mp3,audio/mp4,.m4a,audio/aac,.aac,audio/wav,.wav,audio/ogg,.ogg,audio/flac,.flac,audio/webm,.webm,.opus';
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function AdminPanel() {
   const { songs, setSongs, setIsAdmin, adminToken, setAdminToken } = useAppStore();
@@ -22,8 +31,14 @@ export default function AdminPanel() {
   const [editingSong, setEditingSong] = useState<string | null>(null);
   const [editLyrics, setEditLyrics] = useState('');
   const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Auto-authenticate on mount (no password needed)
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+
+  // Auto-authenticate on mount
   useEffect(() => {
     if (!adminToken) {
       fetch('/api/admin', { method: 'POST' })
@@ -40,16 +55,80 @@ export default function AdminPanel() {
     }
   }, []);
 
+  // Drag & drop events (desktop only)
+  useEffect(() => {
+    const dropZone = dropZoneRef.current;
+    if (!dropZone) return;
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(true);
+    };
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+    };
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('audio/') || /\.(mp3|m4a|wav|ogg|flac|aac|wma|webm|opus)$/i.test(file.name)) {
+          setAudioFile(file);
+          // Auto-fill title from filename if empty
+          const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          if (!uploadForm.title) {
+            setUploadForm(prev => ({ ...prev, title: nameWithoutExt }));
+          }
+        }
+      }
+    };
+
+    dropZone.addEventListener('dragover', handleDragOver);
+    dropZone.addEventListener('dragleave', handleDragLeave);
+    dropZone.addEventListener('drop', handleDrop);
+
+    return () => {
+      dropZone.removeEventListener('dragover', handleDragOver);
+      dropZone.removeEventListener('dragleave', handleDragLeave);
+      dropZone.removeEventListener('drop', handleDrop);
+    };
+  }, [uploadForm.title]);
+
+  const handleAudioSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (file) {
+      setAudioFile(file);
+      // Auto-fill title from filename if empty
+      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      if (!uploadForm.title) {
+        setUploadForm(prev => ({ ...prev, title: nameWithoutExt }));
+      }
+    }
+  };
+
+  const handleCoverSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (file) {
+      setCoverFile(file);
+    }
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!audioFile || !uploadForm.title) {
-      setUploadError('Audio y título son requeridos');
+      setUploadError('Necesitas seleccionar un audio y poner un título');
       return;
     }
 
     setIsUploading(true);
     setUploadError('');
     setUploadSuccess('');
+    setUploadProgress(0);
 
     try {
       const formData = new FormData();
@@ -61,28 +140,42 @@ export default function AdminPanel() {
       formData.append('genre', uploadForm.genre);
       formData.append('lyricsLrc', uploadForm.lyricsLrc);
 
+      // Simulated progress for better UX
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 10, 90));
+      }, 500);
+
       const res = await fetch('/api/upload', {
         method: 'POST',
         headers: { 'x-admin-token': adminToken },
         body: formData,
       });
 
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+
       const data = await res.json();
 
       if (res.ok) {
-        setUploadSuccess(`"${data.title}" subida exitosamente`);
+        setUploadSuccess(`"${data.title}" se subió correctamente`);
         setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
         setAudioFile(null);
         setCoverFile(null);
+        setUploadProgress(0);
+        // Reset file inputs
+        if (audioInputRef.current) audioInputRef.current.value = '';
+        if (coverInputRef.current) coverInputRef.current.value = '';
         // Refresh songs
         const songsRes = await fetch('/api/songs');
         const songsData = await songsRes.json();
         setSongs(songsData.songs || songsData);
       } else {
         setUploadError(data.error || 'Error al subir');
+        setUploadProgress(0);
       }
     } catch {
-      setUploadError('Error de conexión');
+      setUploadError('Error de conexión. Verifica tu internet e intenta de nuevo.');
+      setUploadProgress(0);
     } finally {
       setIsUploading(false);
     }
@@ -125,7 +218,7 @@ export default function AdminPanel() {
 [00:10.00]Tercera línea
 [00:15.30]Sigue así con todas las líneas`;
 
-  const inputClass = "w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500";
+  const inputClass = "w-full px-3 py-2.5 rounded-lg bg-background border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500 placeholder:text-muted-foreground/60";
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
@@ -182,70 +275,163 @@ export default function AdminPanel() {
           <h3 className="text-lg font-semibold mb-4 text-foreground">Subir nueva canción</h3>
 
           {uploadSuccess && (
-            <div className="mb-4 p-3 rounded-lg bg-green-500/10 text-green-400 text-sm">
-              ✓ {uploadSuccess}
+            <div className="mb-4 p-3 rounded-lg bg-green-500/10 text-green-400 text-sm flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+              {uploadSuccess}
             </div>
           )}
           {uploadError && (
-            <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-400 text-sm">
-              ✗ {uploadError}
+            <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-400 text-sm flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+              {uploadError}
             </div>
           )}
 
-          <form onSubmit={handleUpload} className="space-y-4">
-            {/* Audio file */}
+          {/* Upload progress */}
+          {uploadProgress > 0 && isUploading && (
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>Subiendo...</span>
+                <span>{uploadProgress}%</span>
+              </div>
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleUpload} className="space-y-5">
+            {/* Audio file — large touch-friendly selector */}
             <div>
-              <label className="block text-sm font-medium mb-1.5 text-foreground">Archivo de audio *</label>
-              <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-purple-500/50 transition-colors">
+              <label className="block text-sm font-medium mb-2 text-foreground">
+                Archivo de audio <span className="text-purple-400">*</span>
+              </label>
+
+              <div
+                ref={dropZoneRef}
+                onClick={() => audioInputRef.current?.click()}
+                className={`
+                  relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
+                  transition-all active:scale-[0.98]
+                  ${isDragging
+                    ? 'border-purple-400 bg-purple-500/10'
+                    : audioFile
+                      ? 'border-green-500/50 bg-green-500/5'
+                      : 'border-border hover:border-purple-500/50 hover:bg-purple-500/5'
+                  }
+                `}
+              >
+                <input
+                  ref={audioInputRef}
+                  type="file"
+                  accept={AUDIO_ACCEPT}
+                  onChange={handleAudioSelect}
+                  className="hidden"
+                />
+
                 {audioFile ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-sm text-foreground">🎵 {audioFile.name}</span>
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400">
+                        <path d="M9 18V5l12-2v13" />
+                        <circle cx="6" cy="18" r="3" />
+                        <circle cx="18" cy="16" r="3" />
+                      </svg>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-foreground truncate max-w-[250px]">{audioFile.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{formatFileSize(audioFile.size)}</p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setAudioFile(null)}
-                      className="text-muted-foreground hover:text-red-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAudioFile(null);
+                        if (audioInputRef.current) audioInputRef.current.value = '';
+                      }}
+                      className="text-xs text-red-400 hover:text-red-300 px-3 py-1 rounded-md hover:bg-red-500/10 transition-colors"
                     >
-                      ✕
+                      Quitar archivo
                     </button>
                   </div>
                 ) : (
-                  <label className="cursor-pointer">
-                    <svg className="mx-auto mb-2 text-muted-foreground" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="17 8 12 3 7 8" />
-                      <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                    <p className="text-sm text-muted-foreground">
-                      Arrastra o <span className="text-purple-400">selecciona</span> un archivo de audio
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-14 h-14 rounded-full bg-purple-500/10 flex items-center justify-center">
+                      <svg className="text-purple-400" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm text-foreground font-medium">
+                        Toca para seleccionar audio
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        MP3, WAV, OGG, M4A, FLAC, AAC
+                      </p>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/60">
+                      Máximo 100 MB
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">MP3, WAV, OGG, M4A</p>
-                    <input
-                      type="file"
-                      accept="audio/*"
-                      onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
-                      className="hidden"
-                    />
-                  </label>
+                  </div>
                 )}
               </div>
             </div>
 
             {/* Cover file */}
             <div>
-              <label className="block text-sm font-medium mb-1.5 text-foreground">Portada (opcional)</label>
-              <div className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-purple-500/50 transition-colors">
+              <label className="block text-sm font-medium mb-2 text-foreground">Portada (opcional)</label>
+              <div
+                onClick={() => coverInputRef.current?.click()}
+                className={`
+                  border-2 border-dashed rounded-xl p-5 text-center cursor-pointer
+                  transition-all active:scale-[0.98]
+                  ${coverFile
+                    ? 'border-green-500/50 bg-green-500/5'
+                    : 'border-border hover:border-purple-500/50'
+                  }
+                `}
+              >
+                <input
+                  ref={coverInputRef}
+                  type="file"
+                  accept="image/jpeg,.jpg,.jpeg,image/png,.png,image/webp,.webp,image/gif,.gif"
+                  onChange={handleCoverSelect}
+                  className="hidden"
+                />
                 {coverFile ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-sm text-foreground">🖼️ {coverFile.name}</span>
-                    <button type="button" onClick={() => setCoverFile(null)} className="text-muted-foreground hover:text-red-400">✕</button>
+                  <div className="flex items-center justify-center gap-3">
+                    {coverFile.type.startsWith('image/') && (
+                      <img
+                        src={URL.createObjectURL(coverFile)}
+                        alt="Portada"
+                        className="w-12 h-12 rounded-lg object-cover"
+                      />
+                    )}
+                    <div className="text-left">
+                      <p className="text-sm text-foreground">{coverFile.name}</p>
+                      <p className="text-xs text-muted-foreground">{formatFileSize(coverFile.size)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCoverFile(null);
+                        if (coverInputRef.current) coverInputRef.current.value = '';
+                      }}
+                      className="text-xs text-red-400 hover:text-red-300 ml-2"
+                    >
+                      Quitar
+                    </button>
                   </div>
                 ) : (
-                  <label className="cursor-pointer">
-                    <p className="text-sm text-muted-foreground">
-                      Seleccionar <span className="text-purple-400">imagen de portada</span>
-                    </p>
-                    <input type="file" accept="image/*" onChange={(e) => setCoverFile(e.target.files?.[0] || null)} className="hidden" />
-                  </label>
+                  <p className="text-sm text-muted-foreground">
+                    <span className="text-purple-400 font-medium">Toca para seleccionar</span> imagen de portada
+                  </p>
                 )}
               </div>
             </div>
@@ -253,7 +439,9 @@ export default function AdminPanel() {
             {/* Text fields */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1.5 text-foreground">Título *</label>
+                <label className="block text-sm font-medium mb-1.5 text-foreground">
+                  Título <span className="text-purple-400">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder="Nombre de la canción"
@@ -261,6 +449,7 @@ export default function AdminPanel() {
                   onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
                   className={inputClass}
                   required
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -271,6 +460,7 @@ export default function AdminPanel() {
                   value={uploadForm.artist}
                   onChange={(e) => setUploadForm({ ...uploadForm, artist: e.target.value })}
                   className={inputClass}
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -281,6 +471,7 @@ export default function AdminPanel() {
                   value={uploadForm.album}
                   onChange={(e) => setUploadForm({ ...uploadForm, album: e.target.value })}
                   className={inputClass}
+                  autoComplete="off"
                 />
               </div>
               <div>
@@ -291,6 +482,7 @@ export default function AdminPanel() {
                   value={uploadForm.genre}
                   onChange={(e) => setUploadForm({ ...uploadForm, genre: e.target.value })}
                   className={inputClass}
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -320,8 +512,8 @@ export default function AdminPanel() {
 
             <button
               type="submit"
-              disabled={isUploading}
-              className="w-full py-3 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+              disabled={isUploading || !audioFile || !uploadForm.title}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
             >
               {isUploading ? (
                 <>
