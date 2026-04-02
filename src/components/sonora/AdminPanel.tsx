@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { storage } from '@/lib/firebase';
+import { storage, database } from '@/lib/firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { ref as dbRef, push, set } from 'firebase/database';
+import { ref as dbRef, push } from 'firebase/database';
 import LiveTranscriber from './LiveTranscriber';
 
 const AUDIO_ACCEPT = 'audio/mpeg,.mp3,audio/mp4,.m4a,audio/aac,.aac,audio/wav,.wav,audio/ogg,.ogg,audio/flac,.flac,audio/webm,.webm,.opus';
@@ -132,7 +132,7 @@ export default function AdminPanel() {
     setUploadProgress(0);
 
     try {
-      const songId = push(dbRef(storage as unknown as object, 'songs')).key || Date.now().toString();
+      const songId = push(dbRef(database, 'songs')).key || Date.now().toString();
       const ext = getExtension(audioFile.name);
       const now = Date.now();
 
