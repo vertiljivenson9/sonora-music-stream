@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import LiveTranscriber from './LiveTranscriber';
+import { uploadSong, deleteSong, updateSong, onSongsChange } from '@/lib/songs';
 
-// MIME types explícitos para máxima compatibilidad móvil
 const AUDIO_ACCEPT = 'audio/mpeg,.mp3,audio/mp4,.m4a,audio/aac,.aac,audio/wav,.wav,audio/ogg,.ogg,audio/flac,.flac,audio/webm,.webm,.opus';
 
 function formatFileSize(bytes: number): string {
@@ -14,7 +14,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function AdminPanel() {
-  const { songs, setSongs, setIsAdmin, adminToken, setAdminToken } = useAppStore();
+  const { songs, setSongs } = useAppStore();
 
   const [isUploading, setIsUploading] = useState(false);
   const [uploadForm, setUploadForm] = useState({
@@ -33,27 +33,19 @@ export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
   const audioInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  // Auto-authenticate on mount
+  // Listen to songs from Firebase in real-time
   useEffect(() => {
-    if (!adminToken) {
-      fetch('/api/admin', { method: 'POST' })
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            setIsAdmin(true);
-            setAdminToken(data.token);
-          }
-        })
-        .catch(() => {});
-    } else {
-      setIsAdmin(true);
-    }
-  }, []);
+    const unsubscribe = onSongsChange((fetchedSongs) => {
+      setSongs(fetchedSongs);
+    });
+    return () => unsubscribe();
+  }, [setSongs]);
 
   // Drag & drop events (desktop only)
   useEffect(() => {
@@ -79,7 +71,6 @@ export default function AdminPanel() {
         const file = files[0];
         if (file.type.startsWith('audio/') || /\.(mp3|m4a|wav|ogg|flac|aac|wma|webm|opus)$/i.test(file.name)) {
           setAudioFile(file);
-          // Auto-fill title from filename if empty
           const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
           if (!uploadForm.title) {
             setUploadForm(prev => ({ ...prev, title: nameWithoutExt }));
@@ -103,7 +94,6 @@ export default function AdminPanel() {
     const file = e.target.files?.[0] || null;
     if (file) {
       setAudioFile(file);
-      // Auto-fill title from filename if empty
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
       if (!uploadForm.title) {
         setUploadForm(prev => ({ ...prev, title: nameWithoutExt }));
@@ -112,10 +102,7 @@ export default function AdminPanel() {
   };
 
   const handleCoverSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
-    if (file) {
-      setCoverFile(file);
-    }
+    setCoverFile(e.target.files?.[0] || null);
   };
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -131,77 +118,29 @@ export default function AdminPanel() {
     setUploadProgress(0);
 
     try {
-      const formData = new FormData();
-      formData.append('audio', audioFile);
-      if (coverFile) formData.append('cover', coverFile);
-      formData.append('title', uploadForm.title);
-      formData.append('artist', uploadForm.artist);
-      formData.append('album', uploadForm.album);
-      formData.append('genre', uploadForm.genre);
-      formData.append('lyricsLrc', uploadForm.lyricsLrc);
+      const newSong = await uploadSong(
+        audioFile,
+        {
+          title: uploadForm.title,
+          artist: uploadForm.artist,
+          album: uploadForm.album,
+          genre: uploadForm.genre,
+          lyricsLrc: uploadForm.lyricsLrc,
+        },
+        coverFile,
+        (progress) => setUploadProgress(progress)
+      );
 
-      // Use XMLHttpRequest for REAL upload progress
-      const data = await new Promise<{ success?: boolean; title?: string; error?: string }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        const UPLOAD_TIMEOUT = 120000; // 2 minutes
-
-        const timer = setTimeout(() => {
-          xhr.abort();
-          reject(new Error('La subida tardó demasiado. Intenta con un archivo más pequeño.'));
-        }, UPLOAD_TIMEOUT);
-
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            setUploadProgress(pct);
-          }
-        });
-
-        xhr.addEventListener('load', () => {
-          clearTimeout(timer);
-          try {
-            resolve(JSON.parse(xhr.responseText));
-          } catch {
-            reject(new Error('Error del servidor'));
-          }
-        });
-
-        xhr.addEventListener('error', () => {
-          clearTimeout(timer);
-          reject(new Error('Error de conexión. Verifica tu internet.'));
-        });
-
-        xhr.addEventListener('abort', () => {
-          clearTimeout(timer);
-          reject(new Error('Subida cancelada.'));
-        });
-
-        xhr.open('POST', '/api/upload');
-        xhr.setRequestHeader('x-admin-token', adminToken);
-        xhr.send(formData);
-      });
-
-      setUploadProgress(100);
-
-      if (data.success) {
-        setUploadSuccess(`"${data.title}" se subió correctamente`);
-        setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
-        setAudioFile(null);
-        setCoverFile(null);
-        setUploadProgress(0);
-        // Reset file inputs
-        if (audioInputRef.current) audioInputRef.current.value = '';
-        if (coverInputRef.current) coverInputRef.current.value = '';
-        // Refresh songs
-        const songsRes = await fetch('/api/songs');
-        const songsData = await songsRes.json();
-        setSongs(songsData.songs || songsData);
-      } else {
-        setUploadError(data.error || 'Error al subir');
-        setUploadProgress(0);
-      }
-    } catch {
-      setUploadError('Error de conexión. Verifica tu internet e intenta de nuevo.');
+      setUploadSuccess(`"${newSong.title}" se subió correctamente`);
+      setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
+      setAudioFile(null);
+      setCoverFile(null);
+      setUploadProgress(0);
+      if (audioInputRef.current) audioInputRef.current.value = '';
+      if (coverInputRef.current) coverInputRef.current.value = '';
+    } catch (err) {
+      console.error('Upload error:', err);
+      setUploadError('Error al subir. Verifica tu conexión e intenta de nuevo.');
       setUploadProgress(0);
     } finally {
       setIsUploading(false);
@@ -209,32 +148,21 @@ export default function AdminPanel() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar esta canción?')) return;
+    if (!confirm('¿Eliminar esta canción permanentemente?')) return;
+    setIsDeleting(id);
     try {
-      const res = await fetch(`/api/songs/${id}`, { method: 'DELETE', headers: { 'x-admin-token': adminToken } });
-      if (res.ok) {
-        const songsRes = await fetch('/api/songs');
-        const songsData = await songsRes.json();
-        setSongs(songsData.songs || songsData);
-      }
+      await deleteSong(id);
     } catch (error) {
       console.error('Delete error:', error);
+    } finally {
+      setIsDeleting(null);
     }
   };
 
   const handleSaveLyrics = async (songId: string) => {
     try {
-      const res = await fetch(`/api/songs/${songId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-        body: JSON.stringify({ lyricsLrc: editLyrics }),
-      });
-      if (res.ok) {
-        const songsRes = await fetch('/api/songs');
-        const songsData = await songsRes.json();
-        setSongs(songsData.songs || songsData);
-        setEditingSong(null);
-      }
+      await updateSong(songId, { lyricsLrc: editLyrics });
+      setEditingSong(null);
     } catch (error) {
       console.error('Save lyrics error:', error);
     }
@@ -318,12 +246,12 @@ export default function AdminPanel() {
           {uploadProgress > 0 && isUploading && (
             <div className="mb-4">
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>Subiendo...</span>
+                <span>{uploadProgress < 50 ? 'Subiendo audio...' : uploadProgress < 85 ? 'Subiendo portada...' : 'Guardando...'}</span>
                 <span>{uploadProgress}%</span>
               </div>
               <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300"
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-200"
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
@@ -331,12 +259,11 @@ export default function AdminPanel() {
           )}
 
           <form onSubmit={handleUpload} className="space-y-5">
-            {/* Audio file — large touch-friendly selector */}
+            {/* Audio file */}
             <div>
               <label className="block text-sm font-medium mb-2 text-foreground">
                 Archivo de audio <span className="text-purple-400">*</span>
               </label>
-
               <div
                 ref={dropZoneRef}
                 onClick={() => audioInputRef.current?.click()}
@@ -358,7 +285,6 @@ export default function AdminPanel() {
                   onChange={handleAudioSelect}
                   className="hidden"
                 />
-
                 {audioFile ? (
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center">
@@ -394,16 +320,10 @@ export default function AdminPanel() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm text-foreground font-medium">
-                        Toca para seleccionar audio
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        MP3, WAV, OGG, M4A, FLAC, AAC
-                      </p>
+                      <p className="text-sm text-foreground font-medium">Toca para seleccionar audio</p>
+                      <p className="text-xs text-muted-foreground mt-1">MP3, WAV, OGG, M4A, FLAC, AAC</p>
                     </div>
-                    <p className="text-[10px] text-muted-foreground/60">
-                      Máximo 100 MB
-                    </p>
+                    <p className="text-[10px] text-muted-foreground/60">Máximo 100 MB</p>
                   </div>
                 )}
               </div>
@@ -417,10 +337,7 @@ export default function AdminPanel() {
                 className={`
                   border-2 border-dashed rounded-xl p-5 text-center cursor-pointer
                   transition-all active:scale-[0.98]
-                  ${coverFile
-                    ? 'border-green-500/50 bg-green-500/5'
-                    : 'border-border hover:border-purple-500/50'
-                  }
+                  ${coverFile ? 'border-green-500/50 bg-green-500/5' : 'border-border hover:border-purple-500/50'}
                 `}
               >
                 <input
@@ -433,11 +350,7 @@ export default function AdminPanel() {
                 {coverFile ? (
                   <div className="flex items-center justify-center gap-3">
                     {coverFile.type.startsWith('image/') && (
-                      <img
-                        src={URL.createObjectURL(coverFile)}
-                        alt="Portada"
-                        className="w-12 h-12 rounded-lg object-cover"
-                      />
+                      <img src={URL.createObjectURL(coverFile)} alt="Portada" className="w-12 h-12 rounded-lg object-cover" />
                     )}
                     <div className="text-left">
                       <p className="text-sm text-foreground">{coverFile.name}</p>
@@ -466,51 +379,20 @@ export default function AdminPanel() {
             {/* Text fields */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1.5 text-foreground">
-                  Título <span className="text-purple-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Nombre de la canción"
-                  value={uploadForm.title}
-                  onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                  className={inputClass}
-                  required
-                  autoComplete="off"
-                />
+                <label className="block text-sm font-medium mb-1.5 text-foreground">Título <span className="text-purple-400">*</span></label>
+                <input type="text" placeholder="Nombre de la canción" value={uploadForm.title} onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })} className={inputClass} required autoComplete="off" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1.5 text-foreground">Artista</label>
-                <input
-                  type="text"
-                  placeholder="Nombre del artista"
-                  value={uploadForm.artist}
-                  onChange={(e) => setUploadForm({ ...uploadForm, artist: e.target.value })}
-                  className={inputClass}
-                  autoComplete="off"
-                />
+                <input type="text" placeholder="Nombre del artista" value={uploadForm.artist} onChange={(e) => setUploadForm({ ...uploadForm, artist: e.target.value })} className={inputClass} autoComplete="off" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1.5 text-foreground">Álbum</label>
-                <input
-                  type="text"
-                  placeholder="Nombre del álbum"
-                  value={uploadForm.album}
-                  onChange={(e) => setUploadForm({ ...uploadForm, album: e.target.value })}
-                  className={inputClass}
-                  autoComplete="off"
-                />
+                <input type="text" placeholder="Nombre del álbum" value={uploadForm.album} onChange={(e) => setUploadForm({ ...uploadForm, album: e.target.value })} className={inputClass} autoComplete="off" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1.5 text-foreground">Género</label>
-                <input
-                  type="text"
-                  placeholder="Pop, Rock, Hip Hop..."
-                  value={uploadForm.genre}
-                  onChange={(e) => setUploadForm({ ...uploadForm, genre: e.target.value })}
-                  className={inputClass}
-                  autoComplete="off"
-                />
+                <input type="text" placeholder="Pop, Rock, Hip Hop..." value={uploadForm.genre} onChange={(e) => setUploadForm({ ...uploadForm, genre: e.target.value })} className={inputClass} autoComplete="off" />
               </div>
             </div>
 
@@ -518,13 +400,7 @@ export default function AdminPanel() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-sm font-medium text-foreground">Letras (formato LRC)</label>
-                <button
-                  type="button"
-                  onClick={() => setUploadForm({ ...uploadForm, lyricsLrc: lrcTemplate })}
-                  className="text-xs text-purple-400 hover:text-purple-300"
-                >
-                  Usar plantilla
-                </button>
+                <button type="button" onClick={() => setUploadForm({ ...uploadForm, lyricsLrc: lrcTemplate })} className="text-xs text-purple-400 hover:text-purple-300">Usar plantilla</button>
               </div>
               <textarea
                 placeholder={`Ejemplo:\n[00:00.00]Primera línea\n[00:05.50]Segunda línea\n[00:10.00]Tercera línea`}
@@ -532,9 +408,7 @@ export default function AdminPanel() {
                 onChange={(e) => setUploadForm({ ...uploadForm, lyricsLrc: e.target.value })}
                 className={`${inputClass} min-h-[120px] font-mono text-xs resize-y`}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Formato LRC: [mm:ss.ms]Letra de la línea
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Formato LRC: [mm:ss.ms]Letra de la línea</p>
             </div>
 
             <button
@@ -545,7 +419,7 @@ export default function AdminPanel() {
               {isUploading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Subiendo...
+                  Subiendo... {uploadProgress}%
                 </>
               ) : (
                 <>
@@ -587,25 +461,15 @@ export default function AdminPanel() {
                       placeholder="Letras en formato LRC..."
                     />
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleSaveLyrics(song.id)}
-                        className="px-4 py-1.5 rounded-lg bg-purple-500 text-white text-sm hover:bg-purple-600"
-                      >
-                        Guardar
-                      </button>
-                      <button
-                        onClick={() => setEditingSong(null)}
-                        className="px-4 py-1.5 rounded-lg bg-muted text-foreground text-sm hover:bg-accent"
-                      >
-                        Cancelar
-                      </button>
+                      <button onClick={() => handleSaveLyrics(song.id)} className="px-4 py-1.5 rounded-lg bg-purple-500 text-white text-sm hover:bg-purple-600">Guardar</button>
+                      <button onClick={() => setEditingSong(null)} className="px-4 py-1.5 rounded-lg bg-muted text-foreground text-sm hover:bg-accent">Cancelar</button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
                       {song.coverUrl ? (
-                        <img src={`/api/cover/${song.id}`} alt={song.title} className="w-full h-full object-cover" />
+                        <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover" />
                       ) : (
                         <span className="text-purple-400 font-bold">{song.title.charAt(0)}</span>
                       )}
@@ -614,32 +478,20 @@ export default function AdminPanel() {
                       <p className="text-sm font-medium text-foreground truncate">{song.title}</p>
                       <p className="text-xs text-muted-foreground">{song.artist}</p>
                       <div className="flex gap-2 mt-1">
-                        {song.genre && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400">{song.genre}</span>
-                        )}
+                        {song.genre && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400">{song.genre}</span>}
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">▶ {song.playCount}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => { setEditingSong(song.id); setEditLyrics(song.lyricsLrc); }}
-                        className="p-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-                        title="Editar letras"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                        </svg>
+                      <button onClick={() => { setEditingSong(song.id); setEditLyrics(song.lyricsLrc); }} className="p-2 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="Editar letras">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                       </button>
-                      <button
-                        onClick={() => handleDelete(song.id)}
-                        className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
-                        title="Eliminar"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
+                      <button onClick={() => handleDelete(song.id)} disabled={isDeleting === song.id} className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors disabled:opacity-50" title="Eliminar">
+                        {isDeleting === song.id ? (
+                          <div className="w-4 h-4 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                        )}
                       </button>
                     </div>
                   </div>

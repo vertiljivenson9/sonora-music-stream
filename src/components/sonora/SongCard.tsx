@@ -1,10 +1,22 @@
 'use client';
 
-import { useAppStore, type Song } from '@/store/useAppStore';
-import { formatTime } from '@/lib/utils';
+import { useAppStore } from '@/store/useAppStore';
 
 interface SongCardProps {
-  song: Song;
+  song: {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    duration: number;
+    genre: string;
+    filePath: string;
+    coverUrl: string;
+    lyricsLrc: string;
+    lyricsJson: string;
+    playCount: number;
+    createdAt: string;
+  };
   index: number;
 }
 
@@ -19,6 +31,13 @@ export default function SongCard({ song, index }: SongCardProps) {
     songs,
     player,
   } = useAppStore();
+
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return '--:--';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const isCurrentSong = player.currentSong?.id === song.id;
 
@@ -79,7 +98,7 @@ export default function SongCard({ song, index }: SongCardProps) {
       <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
         {song.coverUrl ? (
           <img
-            src={`/api/cover/${song.id}`}
+            src={song.coverUrl}
             alt={song.title}
             className="w-full h-full object-cover"
           />

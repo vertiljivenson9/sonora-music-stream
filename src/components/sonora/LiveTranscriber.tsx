@@ -1,17 +1,15 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function LiveTranscriber() {
   const { player, liveTranscript, setLiveTranscript, isLiveTranscribing, setIsLiveTranscribing } = useAppStore();
   const [isSupported, setIsSupported] = useState(true);
-  const isActiveRef = useRef(false);
 
   const startTranscription = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = window as any;
-    const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setIsSupported(false);
@@ -25,12 +23,11 @@ export default function LiveTranscriber() {
 
     let fullTranscript = '';
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
       let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      for (let i = (event as any).resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
+        if ((event.results[i] as any).isFinal) {
           fullTranscript += transcript + ' ';
         } else {
           interim += transcript;
@@ -43,10 +40,8 @@ export default function LiveTranscriber() {
       setIsLiveTranscribing(false);
     };
 
-    isActiveRef.current = true;
-
     recognition.onend = () => {
-      if (isActiveRef.current) {
+      if (isLiveTranscribing) {
         recognition.start();
       }
     };
@@ -56,7 +51,6 @@ export default function LiveTranscriber() {
   };
 
   const stopTranscription = () => {
-    isActiveRef.current = false;
     setIsLiveTranscribing(false);
   };
 

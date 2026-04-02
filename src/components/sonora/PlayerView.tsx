@@ -5,11 +5,17 @@ import { useAppStore } from '@/store/useAppStore';
 import AudioVisualizer from './AudioVisualizer';
 import LyricsDisplay from './LyricsDisplay';
 import LiveTranscriber from './LiveTranscriber';
-import { formatTime, safeJsonParse } from '@/lib/utils';
 
 export default function PlayerView() {
   const { player, setCurrentView, setVolume } = useAppStore();
   const { currentSong, isPlaying, currentTime, duration, volume } = player;
+
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -44,7 +50,9 @@ export default function PlayerView() {
     );
   }
 
-  const lyrics: { time: number; text: string }[] = safeJsonParse(currentSong.lyricsJson || '[]', []);
+  const lyrics: { time: number; text: string }[] = currentSong.lyricsJson
+    ? JSON.parse(currentSong.lyricsJson)
+    : [];
   const activeIndex = lyrics.findIndex((line, index) => {
     const nextLine = lyrics[index + 1];
     return currentTime >= line.time && (nextLine ? currentTime < nextLine.time : true);
@@ -61,7 +69,7 @@ export default function PlayerView() {
           }`} style={{ animationPlayState: isPlaying ? 'running' : 'paused' }}>
             {currentSong.coverUrl ? (
               <img
-                src={`/api/cover/${currentSong.id}`}
+                src={currentSong.coverUrl}
                 alt={currentSong.title}
                 className="w-full h-full object-cover"
               />

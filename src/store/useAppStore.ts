@@ -20,7 +20,7 @@ export interface Song {
   lyricsJson: string;
   playCount: number;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
 }
 
 interface PlayerState {
