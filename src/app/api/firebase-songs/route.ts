@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminDb, adminBucket } from '@/lib/firebase-admin';
+import { adminDb } from '@/lib/firebase-admin';
 
 const SONGS_PATH = 'songs';
 
@@ -20,99 +20,40 @@ function parseLrc(lrcText: string): Array<{ time: number; text: string }> {
   return lyrics.sort((a, b) => a.time - b.time);
 }
 
-function getExtension(filename: string): string {
-  const parts = filename.toLowerCase().split('.');
-  return parts.length > 1 ? `.${parts.pop()}` : '.mp3';
-}
-
-function getMimeType(ext: string): string {
-  const map: Record<string, string> = {
-    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
-    '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac',
-    '.webm': 'audio/webm', '.wma': 'audio/x-ms-wma', '.opus': 'audio/opus',
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-    '.webp': 'image/webp', '.gif': 'image/gif',
-  };
-  return map[ext] || 'application/octet-stream';
-}
-
-// POST: Upload a new song
+// POST: Save song metadata only (files already uploaded via signed URLs)
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-    const audioFile = formData.get('audio') as File | null;
-    const coverFile = formData.get('cover') as File | null;
-    const title = formData.get('title') as string;
-    const artist = formData.get('artist') as string || 'Desconocido';
-    const album = formData.get('album') as string || '';
-    const genre = formData.get('genre') as string || '';
-    const lyricsLrc = formData.get('lyricsLrc') as string || '';
+    const body = await request.json();
+    const { songId, title, artist, album, genre, lyricsLrc, audioUrl, coverUrl } = body;
 
-    if (!audioFile || !title) {
-      return NextResponse.json({ error: 'Audio y título son requeridos' }, { status: 400 });
+    if (!songId || !title || !audioUrl) {
+      return NextResponse.json({ error: 'songId, title y audioUrl son requeridos' }, { status: 400 });
     }
 
-    if (audioFile.size > 100 * 1024 * 1024) {
-      return NextResponse.json({ error: 'El archivo es muy grande. Máximo 100MB' }, { status: 400 });
-    }
-
-    const songRef = adminDb.ref(SONGS_PATH).push();
-    const songId = songRef.key!;
     const now = Date.now();
-
-    const ext = getExtension(audioFile.name);
-    const mimeType = getMimeType(ext);
-
-    // Upload audio using Admin SDK (bypasses security rules)
-    const audioPath = `songs/${songId}/audio${ext}`;
-    const audioFileRef = adminBucket.file(audioPath);
-    const audioBuffer = Buffer.from(await audioFile.arrayBuffer());
-    
-    await audioFileRef.save(audioBuffer, {
-      metadata: {
-        contentType: mimeType,
-        cacheControl: 'public, max-age=31536000',
-      },
-    });
-    await audioFileRef.makePublic();
-    const audioUrl = `https://storage.googleapis.com/${adminBucket.name}/${audioPath}`;
-
-    // Upload cover if provided
-    let coverUrl = '';
-    if (coverFile && coverFile.size > 0) {
-      const coverExt = getExtension(coverFile.name);
-      const coverPath = `songs/${songId}/cover${coverExt}`;
-      const coverFileRef = adminBucket.file(coverPath);
-      const coverBuffer = Buffer.from(await coverFile.arrayBuffer());
-      
-      await coverFileRef.save(coverBuffer, {
-        metadata: {
-          contentType: getMimeType(coverExt),
-          cacheControl: 'public, max-age=31536000',
-        },
-      });
-      await coverFileRef.makePublic();
-      coverUrl = `https://storage.googleapis.com/${adminBucket.name}/${coverPath}`;
-    }
-
     const lyricsJson = lyricsLrc ? JSON.stringify(parseLrc(lyricsLrc)) : '[]';
-    
+
     const songData = {
-      title, artist, album, duration: 0, genre,
-      audioUrl, coverUrl, lyricsLrc, lyricsJson,
-      playCount: 0, createdAt: now, updatedAt: now,
+      title,
+      artist: artist || 'Desconocido',
+      album: album || '',
+      duration: 0,
+      genre: genre || '',
+      audioUrl,
+      coverUrl: coverUrl || '',
+      lyricsLrc: lyricsLrc || '',
+      lyricsJson,
+      playCount: 0,
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await songRef.set(songData);
+    await adminDb.ref(`${SONGS_PATH}/${songId}`).set(songData);
 
-    return NextResponse.json({
-      id: songId, ...songData,
-      filePath: audioUrl,
-    }, { status: 201 });
-
+    return NextResponse.json({ id: songId, ...songData, filePath: audioUrl }, { status: 201 });
   } catch (error) {
-    console.error('Upload error:', error);
-    return NextResponse.json({ error: 'Error al subir la canción' }, { status: 500 });
+    console.error('Save song error:', error);
+    return NextResponse.json({ error: 'Error al guardar la canción' }, { status: 500 });
   }
 }
 

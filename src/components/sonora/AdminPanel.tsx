@@ -12,6 +12,14 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+interface UploadUrls {
+  songId: string;
+  audioUploadUrl: string;
+  audioDownloadUrl: string;
+  coverUploadUrl: string;
+  coverDownloadUrl: string;
+}
+
 export default function AdminPanel() {
   const { songs, setSongs } = useAppStore();
 
@@ -27,6 +35,7 @@ export default function AdminPanel() {
   const [editLyrics, setEditLyrics] = useState('');
   const [activeTab, setActiveTab] = useState<'upload' | 'manage'>('upload');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
@@ -34,7 +43,6 @@ export default function AdminPanel() {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  // Fetch songs on mount and after upload/delete
   const fetchSongs = async () => {
     try {
       const res = await fetch('/api/firebase-songs');
@@ -51,7 +59,7 @@ export default function AdminPanel() {
     fetchSongs();
   }, [setSongs]);
 
-  // Drag & drop (desktop)
+  // Drag & drop
   useEffect(() => {
     const dropZone = dropZoneRef.current;
     if (!dropZone) return;
@@ -107,62 +115,127 @@ export default function AdminPanel() {
     setUploadProgress(0);
 
     try {
-      const formData = new FormData();
-      formData.append('audio', audioFile);
-      if (coverFile) formData.append('cover', coverFile);
-      formData.append('title', uploadForm.title);
-      formData.append('artist', uploadForm.artist);
-      formData.append('album', uploadForm.album);
-      formData.append('genre', uploadForm.genre);
-      formData.append('lyricsLrc', uploadForm.lyricsLrc);
+      // ===== PASO 1: Obtener URLs firmadas del servidor =====
+      setUploadStage('Preparando subida...');
 
-      // Real upload progress with XMLHttpRequest
-      const data = await new Promise<{ id?: string; title?: string; error?: string }>((resolve, reject) => {
+      const urlResp = await fetch('/api/firebase-songs/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioFileName: audioFile.name,
+          audioContentType: audioFile.type || 'audio/mpeg',
+          coverFileName: coverFile?.name || undefined,
+          coverContentType: coverFile?.type || undefined,
+        }),
+      });
+
+      if (!urlResp.ok) {
+        const errData = await urlResp.json();
+        throw new Error(errData.error || 'Error al obtener URLs de subida');
+      }
+
+      const urls: UploadUrls = await urlResp.json();
+
+      // ===== PASO 2: Subir audio directamente a Google Cloud Storage =====
+      setUploadStage('Subiendo audio...');
+
+      await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        const UPLOAD_TIMEOUT = 180000; // 3 minutes
-
-        const timer = setTimeout(() => {
-          xhr.abort();
-          reject(new Error('La subida tardó demasiado. Intenta con un archivo más pequeño.'));
-        }, UPLOAD_TIMEOUT);
+        xhr.open('PUT', urls.audioUploadUrl, true);
+        xhr.setRequestHeader('Content-Type', audioFile.type || 'audio/mpeg');
 
         xhr.upload.addEventListener('progress', (e) => {
           if (e.lengthComputable) {
-            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+            // Audio upload counts for 0-85% of total progress
+            const audioProgress = Math.round((e.loaded / e.total) * 85);
+            setUploadProgress(audioProgress);
           }
         });
 
         xhr.addEventListener('load', () => {
-          clearTimeout(timer);
-          try { resolve(JSON.parse(xhr.responseText)); }
-          catch { reject(new Error('Error del servidor')); }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Error al subir audio (HTTP ${xhr.status})`));
+          }
         });
 
-        xhr.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Error de conexión. Verifica tu internet.')); });
-        xhr.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('Subida cancelada.')); });
+        xhr.addEventListener('error', () => reject(new Error('Error de conexión al subir audio')));
+        xhr.addEventListener('timeout', () => reject(new Error('Tiempo de espera agotado al subir audio')));
+        xhr.timeout = 600000; // 10 minutes
 
-        xhr.open('POST', '/api/firebase-songs');
-        xhr.send(formData);
+        xhr.send(audioFile);
       });
 
-      setUploadProgress(100);
+      // ===== PASO 3: Subir portada si existe =====
+      let finalCoverUrl = urls.coverDownloadUrl;
 
-      if (data.title) {
-        setUploadSuccess(`"${data.title}" se subió correctamente`);
-        setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
-        setAudioFile(null);
-        setCoverFile(null);
-        setUploadProgress(0);
-        if (audioInputRef.current) audioInputRef.current.value = '';
-        if (coverInputRef.current) coverInputRef.current.value = '';
-        fetchSongs();
+      if (coverFile && coverFile.size > 0 && urls.coverUploadUrl) {
+        setUploadStage('Subiendo portada...');
+        setUploadProgress(87);
+
+        await new Promise<void>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', urls.coverUploadUrl, true);
+          xhr.setRequestHeader('Content-Type', coverFile.type || 'image/jpeg');
+
+          xhr.addEventListener('load', () => {
+            // Cover upload failure is not fatal
+            if (xhr.status < 200 || xhr.status >= 300) {
+              finalCoverUrl = ''; // Mark as failed
+            }
+            resolve();
+          });
+
+          xhr.addEventListener('error', () => { finalCoverUrl = ''; resolve(); });
+          xhr.timeout = 300000; // 5 minutes
+          xhr.send(coverFile);
+        });
       } else {
-        setUploadError(data.error || 'Error al subir');
-        setUploadProgress(0);
+        finalCoverUrl = '';
       }
+
+      // ===== PASO 4: Guardar metadatos en Firebase Realtime Database =====
+      setUploadStage('Guardando información...');
+      setUploadProgress(92);
+
+      const saveResp = await fetch('/api/firebase-songs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          songId: urls.songId,
+          title: uploadForm.title,
+          artist: uploadForm.artist,
+          album: uploadForm.album,
+          genre: uploadForm.genre,
+          lyricsLrc: uploadForm.lyricsLrc,
+          audioUrl: urls.audioDownloadUrl,
+          coverUrl: finalCoverUrl,
+        }),
+      });
+
+      if (!saveResp.ok) {
+        const errData = await saveResp.json();
+        throw new Error(errData.error || 'Error al guardar la canción');
+      }
+
+      setUploadProgress(100);
+      setUploadStage('');
+
+      setUploadSuccess(`"${uploadForm.title}" se subió correctamente`);
+      setUploadForm({ title: '', artist: '', album: '', genre: '', lyricsLrc: '' });
+      setAudioFile(null);
+      setCoverFile(null);
+      setTimeout(() => setUploadProgress(0), 2000);
+      if (audioInputRef.current) audioInputRef.current.value = '';
+      if (coverInputRef.current) coverInputRef.current.value = '';
+      fetchSongs();
+
     } catch (err: unknown) {
-      setUploadError(err instanceof Error ? err.message : 'Error al subir');
+      console.error('Upload error:', err);
+      setUploadError(err instanceof Error ? err.message : 'Error al subir la canción');
       setUploadProgress(0);
+      setUploadStage('');
     } finally {
       setIsUploading(false);
     }
@@ -242,11 +315,11 @@ export default function AdminPanel() {
           {uploadProgress > 0 && isUploading && (
             <div className="mb-4">
               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>{uploadProgress < 100 ? 'Subiendo a Firebase...' : '¡Listo!'}</span>
+                <span>{uploadStage || 'Subiendo...'}</span>
                 <span>{uploadProgress}%</span>
               </div>
               <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-200" style={{ width: `${uploadProgress}%` }} />
+                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
               </div>
             </div>
           )}
@@ -273,7 +346,7 @@ export default function AdminPanel() {
                       <svg className="text-purple-400" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
                     </div>
                     <div><p className="text-sm text-foreground font-medium">Toca para seleccionar audio</p><p className="text-xs text-muted-foreground mt-1">MP3, WAV, OGG, M4A, FLAC, AAC</p></div>
-                    <p className="text-[10px] text-muted-foreground/60">Máximo 100 MB</p>
+                    <p className="text-[10px] text-muted-foreground/60">Sin límite de tamaño</p>
                   </div>
                 )}
               </div>
@@ -312,7 +385,7 @@ export default function AdminPanel() {
             </div>
 
             <button type="submit" disabled={isUploading || !audioFile || !uploadForm.title} className="w-full py-3.5 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm">
-              {isUploading ? (<><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Subiendo... {uploadProgress}%</>) : (<><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Subir Canción</>)}
+              {isUploading ? (<><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{uploadStage || 'Subiendo...'} {uploadProgress}%</>) : (<><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>Subir Canción</>)}
             </button>
           </form>
         </div>
