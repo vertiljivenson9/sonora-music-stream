@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/useAppStore';
+import { storage } from '@/lib/firebase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { ref as dbRef, push, set } from 'firebase/database';
 import LiveTranscriber from './LiveTranscriber';
 
 const AUDIO_ACCEPT = 'audio/mpeg,.mp3,audio/mp4,.m4a,audio/aac,.aac,audio/wav,.wav,audio/ogg,.ogg,audio/flac,.flac,audio/webm,.webm,.opus';
@@ -12,12 +15,26 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-interface UploadUrls {
-  songId: string;
-  audioUploadUrl: string;
-  audioDownloadUrl: string;
-  coverUploadUrl: string;
-  coverDownloadUrl: string;
+function getExtension(filename: string): string {
+  const parts = filename.toLowerCase().split('.');
+  return parts.length > 1 ? `.${parts.pop()}` : '.mp3';
+}
+
+function parseLrc(lrcText: string): Array<{ time: number; text: string }> {
+  const lines = lrcText.split('\n');
+  const lyrics: Array<{ time: number; text: string }> = [];
+  for (const line of lines) {
+    const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
+    if (match) {
+      const minutes = parseInt(match[1]);
+      const seconds = parseInt(match[2]);
+      const ms = parseInt(match[3].padEnd(3, '0'));
+      const time = minutes * 60 + seconds + ms / 1000;
+      const text = match[4].trim();
+      if (text) lyrics.push({ time, text });
+    }
+  }
+  return lyrics.sort((a, b) => a.time - b.time);
 }
 
 export default function AdminPanel() {
@@ -115,107 +132,86 @@ export default function AdminPanel() {
     setUploadProgress(0);
 
     try {
-      // ===== PASO 1: Obtener URLs firmadas del servidor =====
-      setUploadStage('Preparando subida...');
+      const songId = push(dbRef(storage as unknown as object, 'songs')).key || Date.now().toString();
+      const ext = getExtension(audioFile.name);
+      const now = Date.now();
 
-      const urlResp = await fetch('/api/firebase-songs/upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioFileName: audioFile.name,
-          audioContentType: audioFile.type || 'audio/mpeg',
-          coverFileName: coverFile?.name || undefined,
-          coverContentType: coverFile?.type || undefined,
-        }),
-      });
-
-      if (!urlResp.ok) {
-        const errData = await urlResp.json();
-        throw new Error(errData.error || 'Error al obtener URLs de subida');
-      }
-
-      const urls: UploadUrls = await urlResp.json();
-
-      // ===== PASO 2: Subir audio directamente a Google Cloud Storage =====
+      // ===== PASO 1: Subir audio directamente a Firebase Storage =====
       setUploadStage('Subiendo audio...');
+      const audioStorageRef = ref(storage, `songs/${songId}/audio${ext}`);
+      const audioUploadTask = uploadBytesResumable(audioStorageRef, audioFile, {
+        cacheControl: 'public, max-age=31536000',
+      });
 
       await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('PUT', urls.audioUploadUrl, true);
-        xhr.setRequestHeader('Content-Type', audioFile.type || 'audio/mpeg');
-
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            // Audio upload counts for 0-85% of total progress
-            const audioProgress = Math.round((e.loaded / e.total) * 85);
-            setUploadProgress(audioProgress);
-          }
-        });
-
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Error al subir audio (HTTP ${xhr.status})`));
-          }
-        });
-
-        xhr.addEventListener('error', () => reject(new Error('Error de conexión al subir audio')));
-        xhr.addEventListener('timeout', () => reject(new Error('Tiempo de espera agotado al subir audio')));
-        xhr.timeout = 600000; // 10 minutes
-
-        xhr.send(audioFile);
+        audioUploadTask.on('state_changed',
+          (snapshot) => {
+            const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 85);
+            setUploadProgress(progress);
+          },
+          (error) => {
+            console.error('Audio upload error:', error);
+            reject(new Error('Error al subir el audio: ' + getFirebaseErrorMsg(error)));
+          },
+          () => resolve()
+        );
       });
 
-      // ===== PASO 3: Subir portada si existe =====
-      let finalCoverUrl = urls.coverDownloadUrl;
+      const audioUrl = await getDownloadURL(audioStorageRef);
 
-      if (coverFile && coverFile.size > 0 && urls.coverUploadUrl) {
+      // ===== PASO 2: Subir portada si existe =====
+      let coverUrl = '';
+      if (coverFile && coverFile.size > 0) {
         setUploadStage('Subiendo portada...');
         setUploadProgress(87);
+        const coverExt = getExtension(coverFile.name);
+        const coverStorageRef = ref(storage, `songs/${songId}/cover${coverExt}`);
+        const coverUploadTask = uploadBytesResumable(coverStorageRef, coverFile, {
+          cacheControl: 'public, max-age=31536000',
+        });
 
         await new Promise<void>((resolve) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', urls.coverUploadUrl, true);
-          xhr.setRequestHeader('Content-Type', coverFile.type || 'image/jpeg');
-
-          xhr.addEventListener('load', () => {
-            // Cover upload failure is not fatal
-            if (xhr.status < 200 || xhr.status >= 300) {
-              finalCoverUrl = ''; // Mark as failed
-            }
-            resolve();
-          });
-
-          xhr.addEventListener('error', () => { finalCoverUrl = ''; resolve(); });
-          xhr.timeout = 300000; // 5 minutes
-          xhr.send(coverFile);
+          coverUploadTask.on('state_changed',
+            () => {},
+            (error) => {
+              console.warn('Cover upload error:', error);
+              resolve(); // Cover is optional, don't fail
+            },
+            () => resolve()
+          );
         });
-      } else {
-        finalCoverUrl = '';
+
+        try {
+          coverUrl = await getDownloadURL(coverStorageRef);
+        } catch {
+          // Cover is optional
+        }
       }
 
-      // ===== PASO 4: Guardar metadatos en Firebase Realtime Database =====
+      // ===== PASO 3: Guardar metadatos en Firebase RTDB via API =====
       setUploadStage('Guardando información...');
       setUploadProgress(92);
+
+      const lyricsLrc = uploadForm.lyricsLrc || '';
+      const lyricsJson = lyricsLrc ? JSON.stringify(parseLrc(lyricsLrc)) : '[]';
 
       const saveResp = await fetch('/api/firebase-songs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          songId: urls.songId,
+          songId,
           title: uploadForm.title,
           artist: uploadForm.artist,
           album: uploadForm.album,
           genre: uploadForm.genre,
-          lyricsLrc: uploadForm.lyricsLrc,
-          audioUrl: urls.audioDownloadUrl,
-          coverUrl: finalCoverUrl,
+          lyricsLrc,
+          audioUrl,
+          coverUrl,
         }),
       });
 
       if (!saveResp.ok) {
-        const errData = await saveResp.json();
+        const errData = await saveResp.json().catch(() => ({ error: 'Error del servidor' }));
         throw new Error(errData.error || 'Error al guardar la canción');
       }
 
@@ -440,4 +436,26 @@ export default function AdminPanel() {
       )}
     </div>
   );
+}
+
+// Traduce errores de Firebase Storage a mensajes legibles
+function getFirebaseErrorMsg(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'Error desconocido';
+  const code = (error as { code?: string }).code;
+  const msg = (error as { message?: string }).message || '';
+
+  if (code === 'storage/unauthorized') return 'Sin permiso para subir. Verifica las reglas de Firebase Storage.';
+  if (code === 'storage/canceled') return 'Subida cancelada.';
+  if (code === 'storage/quota-exceeded') return 'Espacio de almacenamiento lleno.';
+  if (code === 'storage/unauthenticated') return 'Necesitas autenticarte para subir.';
+  if (code === 'storage/retry-limit-exceeded') return 'Se excedió el límite de reintentos. Verifica tu conexión.';
+  if (code === 'storage/invalid-checksum') return 'Error de verificación del archivo. Intenta de nuevo.';
+  if (code === 'storage/server-file-wrong-size') return 'El archivo no coincide con el tamaño del servidor.';
+
+  // Si el mensaje contiene "security rules" o "not allowed"
+  if (msg.toLowerCase().includes('not allowed') || msg.toLowerCase().includes('security rules')) {
+    return 'Reglas de seguridad bloquean la subida. Verifica las reglas de Firebase Storage.';
+  }
+
+  return msg || 'Error desconocido de Firebase Storage';
 }
