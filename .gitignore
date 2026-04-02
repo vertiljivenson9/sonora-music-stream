@@ -7,3 +7,4 @@ db/
 download/
 search_*.json
 bun.lock
+credentials/
